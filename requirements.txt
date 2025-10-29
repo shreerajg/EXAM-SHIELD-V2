@@ -1,0 +1,16 @@
+tkinter
+pystray>=0.19.4
+Pillow>=9.0.0
+keyboard>=1.13.0
+pynput>=1.7.6
+psutil>=5.8.0
+pywin32>=304
+sqlite3
+hashlib
+threading
+json
+datetime
+subprocess
+ctypes
+os
+sys
