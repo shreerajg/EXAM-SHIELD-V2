@@ -18,13 +18,14 @@ class WindowManager:
         self.monitoring_thread = None
         self.stop_monitoring = False
         
-        # Premium configuration
+        # Premium configuration - Updated to not force fullscreen
         self.config = {
             'prevent_minimize': True,
             'prevent_close': True,
-            'prevent_alt_tab': True,
-            'force_topmost': True,
-            'block_task_manager': True
+            'prevent_alt_tab': False,  # Allow Alt+Tab for better user experience
+            'force_topmost': False,    # Don't force topmost, just disable buttons
+            'block_task_manager': True,
+            'disable_system_menu': True  # Disable system menu (right-click on title bar)
         }
 
     def start_window_protection(self, config=None):
@@ -42,7 +43,7 @@ class WindowManager:
             
             if self.logger:
                 self.logger.log_activity("WINDOW_PROTECTION_STARTED", 
-                                       "Premium window protection activated")
+                                       "Premium window protection activated - buttons disabled")
             return True
             
         except Exception as e:
@@ -52,17 +53,20 @@ class WindowManager:
             return False
 
     def stop_window_protection(self):
-        """Stop window protection"""
+        """Stop window protection and restore window functionality"""
         try:
             self.is_active = False
             self.stop_monitoring = True
+            
+            # Restore all protected windows
+            self._restore_all_windows()
             
             if self.monitoring_thread:
                 self.monitoring_thread.join(timeout=2)
             
             if self.logger:
                 self.logger.log_activity("WINDOW_PROTECTION_STOPPED", 
-                                       "Window protection deactivated")
+                                       "Window protection deactivated - functionality restored")
             return True
             
         except Exception as e:
@@ -76,16 +80,16 @@ class WindowManager:
         while not self.stop_monitoring and self.is_active:
             try:
                 self._enforce_window_rules()
-                time.sleep(0.5)  # Check every 500ms
+                time.sleep(1.0)  # Check every 1 second (less frequent for better performance)
             except Exception as e:
                 if self.logger:
                     self.logger.log_activity("WINDOW_MONITOR_ERROR", f"Window monitoring error: {str(e)}")
-                time.sleep(1)
+                time.sleep(2)
 
     def _enforce_window_rules(self):
-        """Enforce window protection rules"""
+        """Enforce window protection rules without forcing fullscreen"""
         try:
-            # Get all windows
+            # Get all visible windows
             def enum_windows_callback(hwnd, windows):
                 if win32gui.IsWindowVisible(hwnd):
                     window_text = win32gui.GetWindowText(hwnd)
@@ -97,47 +101,114 @@ class WindowManager:
             win32gui.EnumWindows(enum_windows_callback, windows)
             
             for hwnd, title in windows:
-                self._protect_window(hwnd, title)
-                
+                if self._is_protected_window(title):
+                    self._protect_window(hwnd, title)
+                    
         except Exception as e:
             if self.logger:
                 self.logger.log_activity("WINDOW_ENFORCEMENT_ERROR", f"Error enforcing rules: {str(e)}")
 
     def _protect_window(self, hwnd, title):
-        """Apply protection to individual window"""
+        """Apply protection to individual window - disable buttons only"""
         try:
-            # Check if this is a system critical window or exam software
-            if self._is_protected_window(title):
-                if self.config['force_topmost']:
-                    win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
-                                        win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
-                
-                # Disable close button if needed
+            # Track protected windows
+            window_info = {'hwnd': hwnd, 'title': title}
+            if window_info not in self.protected_windows:
+                self.protected_windows.append(window_info)
+            
+            # Get system menu handle
+            menu = win32gui.GetSystemMenu(hwnd, False)
+            if menu:
+                # Disable close button if configured
                 if self.config['prevent_close']:
-                    self._disable_close_button(hwnd)
+                    win32gui.EnableMenuItem(menu, win32con.SC_CLOSE, 
+                                          win32con.MF_BYCOMMAND | win32con.MF_GRAYED | win32con.MF_DISABLED)
+                
+                # Disable minimize button if configured
+                if self.config['prevent_minimize']:
+                    win32gui.EnableMenuItem(menu, win32con.SC_MINIMIZE, 
+                                          win32con.MF_BYCOMMAND | win32con.MF_GRAYED | win32con.MF_DISABLED)
+                    
+                    # Also disable the minimize button on title bar
+                    style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+                    style = style & ~win32con.WS_MINIMIZEBOX
+                    win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, style)
+                
+                # Disable maximize/restore if needed (optional)
+                if self.config.get('prevent_maximize', False):
+                    win32gui.EnableMenuItem(menu, win32con.SC_MAXIMIZE, 
+                                          win32con.MF_BYCOMMAND | win32con.MF_GRAYED | win32con.MF_DISABLED)
+                    win32gui.EnableMenuItem(menu, win32con.SC_RESTORE, 
+                                          win32con.MF_BYCOMMAND | win32con.MF_GRAYED | win32con.MF_DISABLED)
+                    
+                    # Also disable maximize button on title bar
+                    style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+                    style = style & ~win32con.WS_MAXIMIZEBOX
+                    win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, style)
+                
+                # Disable system menu entirely if configured
+                if self.config['disable_system_menu']:
+                    style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+                    style = style & ~win32con.WS_SYSMENU
+                    win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, style)
+            
+            # Only set topmost if explicitly configured (not by default)
+            if self.config.get('force_topmost', False):
+                win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)
                     
         except Exception as e:
-            pass  # Silently handle window protection errors
+            if self.logger:
+                self.logger.log_activity("WINDOW_PROTECTION_ERROR", 
+                                       f"Error protecting window '{title}': {str(e)}")
+
+    def _restore_all_windows(self):
+        """Restore functionality to all protected windows"""
+        for window_info in self.protected_windows:
+            try:
+                hwnd = window_info['hwnd']
+                if win32gui.IsWindow(hwnd):
+                    # Restore system menu
+                    win32gui.GetSystemMenu(hwnd, True)  # Reset to default
+                    
+                    # Restore window style
+                    style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+                    style = style | win32con.WS_MINIMIZEBOX | win32con.WS_MAXIMIZEBOX | win32con.WS_SYSMENU
+                    win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, style)
+                    
+                    # Remove topmost if it was set
+                    win32gui.SetWindowPos(hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0,
+                                        win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)
+            except:
+                pass  # Window might have been closed
+        
+        self.protected_windows.clear()
 
     def _is_protected_window(self, title):
         """Determine if window should be protected"""
         protected_keywords = [
             'exam', 'test', 'quiz', 'assessment',
-            'exam shield', 'browser', 'secure'
+            'exam shield', 'browser', 'secure',
+            'proctoring', 'monitoring'
         ]
         
         title_lower = title.lower()
         return any(keyword in title_lower for keyword in protected_keywords)
 
-    def _disable_close_button(self, hwnd):
-        """Disable window close button"""
+    def protect_specific_window(self, window_title):
+        """Manually protect a specific window by title"""
         try:
-            menu = win32gui.GetSystemMenu(hwnd, False)
-            if menu:
-                win32gui.EnableMenuItem(menu, win32con.SC_CLOSE, 
-                                      win32con.MF_BYCOMMAND | win32con.MF_GRAYED)
-        except:
-            pass
+            hwnd = win32gui.FindWindow(None, window_title)
+            if hwnd:
+                self._protect_window(hwnd, window_title)
+                if self.logger:
+                    self.logger.log_activity("MANUAL_PROTECTION", f"Protected window: {window_title}")
+                return True
+        except Exception as e:
+            if self.logger:
+                self.logger.log_activity("MANUAL_PROTECTION_ERROR", 
+                                       f"Failed to protect '{window_title}': {str(e)}")
+        return False
 
     def get_status(self):
         """Get window manager status"""
@@ -145,5 +216,6 @@ class WindowManager:
             'active': self.is_active,
             'protected_windows': len(self.protected_windows),
             'configuration': self.config,
-            'monitoring': not self.stop_monitoring
+            'monitoring': not self.stop_monitoring,
+            'protection_mode': 'Button Disable Only' if not self.config.get('force_topmost', False) else 'Full Protection'
         }
