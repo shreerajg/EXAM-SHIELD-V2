@@ -14,7 +14,8 @@ class MouseManager:
     def __init__(self, logger=None):
         self.logger = logger
         self.is_active = False
-        self.blocked_buttons = ['middle', 'x1', 'x2']  # Default blocked buttons
+        # Only block custom buttons, allow left and right clicks for normal usage
+        self.blocked_buttons = ['middle', 'x1', 'x2']  # Custom buttons blocked
         self.hook_installed = False
         self.mouse_listener = None
         self.block_all = False
@@ -65,9 +66,10 @@ class MouseManager:
         """Setup low-level mouse hook with premium error handling"""
         try:
             if not self.mouse_listener:
+                # Use suppress=True for blocked buttons to prevent the action
                 self.mouse_listener = mouse.Listener(
                     on_click=self._on_mouse_click,
-                    suppress=False
+                    suppress=False  # We'll handle suppression manually
                 )
                 self.mouse_listener.start()
                 self.hook_installed = True
@@ -91,22 +93,33 @@ class MouseManager:
         if not self.is_active:
             return True
         
+        # Convert button to string for comparison
         button_name = str(button).replace('Button.', '').lower()
         
-        if button_name in self.blocked_buttons or self.block_all:
-            if self.logger:
-                self.logger.log_activity("MOUSE_BLOCKED", 
-                                       f"Blocked {button_name} button click at ({x}, {y})")
-            return False  # Block the click
+        # Allow left and right clicks for normal operation
+        # Only block custom buttons (middle, x1, x2, etc.)
+        if button_name in self.blocked_buttons:
+            if pressed:  # Only log on button press, not release
+                if self.logger:
+                    self.logger.log_activity("MOUSE_BLOCKED", 
+                                           f"Blocked {button_name} button click at ({x}, {y})")
+            return False  # Block the custom button click
         
-        return True  # Allow the click
+        # Allow all other clicks (left, right) and mouse movement
+        return True
 
     def add_blocked_button(self, button):
-        """Add a button to the blocked list"""
-        if button not in self.blocked_buttons:
+        """Add a button to the blocked list (avoid blocking left/right for normal usage)"""
+        # Prevent blocking essential buttons unless explicitly required
+        if button.lower() not in ['left', 'right'] and button not in self.blocked_buttons:
             self.blocked_buttons.append(button)
             if self.logger:
                 self.logger.log_activity("MOUSE_CONFIG", f"Added blocked button: {button}")
+        elif button.lower() in ['left', 'right']:
+            if self.logger:
+                self.logger.log_activity("MOUSE_CONFIG", f"Warning: Blocking {button} button may interfere with normal usage")
+            if button not in self.blocked_buttons:
+                self.blocked_buttons.append(button)
 
     def remove_blocked_button(self, button):
         """Remove a button from the blocked list"""
@@ -121,5 +134,7 @@ class MouseManager:
             'active': self.is_active,
             'blocked_buttons': self.blocked_buttons,
             'hook_installed': self.hook_installed,
-            'total_blocked': len(self.blocked_buttons)
+            'total_blocked': len(self.blocked_buttons),
+            'allows_movement': True,
+            'allows_basic_clicks': 'left' not in self.blocked_buttons and 'right' not in self.blocked_buttons
         }
