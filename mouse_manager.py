@@ -1,6 +1,7 @@
 """
 Mouse Manager for Exam Shield Premium
 Complete rewrite with proper Windows API low-level hooks
+Fixed Windows constants issue
 """
 
 import win32api
@@ -15,13 +16,10 @@ class MouseManager:
     def __init__(self, logger=None):
         self.logger = logger
         self.is_active = False
-        # Block middle mouse and custom buttons, allow left/right for basic interaction
-        self.blocked_buttons = [win32con.WM_MBUTTONDOWN, win32con.WM_MBUTTONUP,
-                               win32con.WM_XBUTTONDOWN, win32con.WM_XBUTTONUP]
         self.hook = None
         self.hook_id = None
         
-        # Windows API constants
+        # Define Windows message constants manually (since win32con might not have all)
         self.WH_MOUSE_LL = 14
         self.WM_LBUTTONDOWN = 0x0201
         self.WM_LBUTTONUP = 0x0202
@@ -29,8 +27,14 @@ class MouseManager:
         self.WM_RBUTTONUP = 0x0205
         self.WM_MBUTTONDOWN = 0x0207
         self.WM_MBUTTONUP = 0x0208
-        self.WM_XBUTTONDOWN = 0x020B
-        self.WM_XBUTTONUP = 0x020C
+        self.WM_XBUTTONDOWN = 0x020B  # This was missing from win32con
+        self.WM_XBUTTONUP = 0x020C    # This was missing from win32con
+        
+        # Default blocked buttons (middle mouse and side buttons)
+        self.blocked_buttons = [
+            self.WM_MBUTTONDOWN, self.WM_MBUTTONUP,
+            self.WM_XBUTTONDOWN, self.WM_XBUTTONUP
+        ]
         
         # Setup Windows API types
         self.user32 = windll.user32
@@ -160,7 +164,8 @@ class MouseManager:
             'middle': [self.WM_MBUTTONDOWN, self.WM_MBUTTONUP],
             'x1': [self.WM_XBUTTONDOWN, self.WM_XBUTTONUP],
             'x2': [self.WM_XBUTTONDOWN, self.WM_XBUTTONUP],
-            'custom': [self.WM_XBUTTONDOWN, self.WM_XBUTTONUP]
+            'custom': [self.WM_XBUTTONDOWN, self.WM_XBUTTONUP],
+            'side': [self.WM_XBUTTONDOWN, self.WM_XBUTTONUP]
         }
         
         messages = []
